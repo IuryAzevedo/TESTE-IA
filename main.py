@@ -4,8 +4,6 @@ from keras.layers import GlobalMaxPooling2D, Dense, Flatten, Dropout, BatchNorma
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, LearningRateScheduler
 from keras.applications import EfficientNetB4
 from keras import Sequential
-import math
-import urllib
 from keras.preprocessing import image
 from keras.applications.efficientnet import preprocess_input
 from keras.applications.vgg16 import preprocess_input as vgg_preprocess
@@ -18,13 +16,13 @@ from uvicorn import run
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import httpx
-import json
 from PIL import Image
 
 # Carregar o modelo treinado
+
+#custom_objects = {"batch_shape": (1, 128, 128, 1)}  # Defina a especificação de batch_shape como um objeto personalizado
 model = tf.keras.models.load_model('meu_modelo.h5')
-model.load_weights('meus_pesos.h5')
+model.load_weights('my_weights.weights.h5')
 
 img_size = 128
 
