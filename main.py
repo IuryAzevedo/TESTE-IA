@@ -22,8 +22,7 @@ from PIL import Image
 
 #custom_objects = {"batch_shape": (1, 128, 128, 1)}  # Defina a especificação de batch_shape como um objeto personalizado
 model = tf.keras.models.load_model('meu_modelo.h5')
-model.load_weights('my_weights.weights.h5')
-
+model.save_weights('my_weights.weights.h5')
 img_size = 128
 
 def load_and_preprocess_image(file):
