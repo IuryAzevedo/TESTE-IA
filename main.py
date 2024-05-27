@@ -1,43 +1,78 @@
-from pyexpat import model
-import keras.models
-from keras.layers import GlobalMaxPooling2D, Dense, Flatten, Dropout, BatchNormalization
-from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, LearningRateScheduler
-from keras.applications import EfficientNetB4
-from keras import Sequential
-from keras.preprocessing import image
-from keras.applications.efficientnet import preprocess_input
-from keras.applications.vgg16 import preprocess_input as vgg_preprocess
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torchvision import transforms
 from fastapi import FastAPI, File, UploadFile
-from keras.metrics import mean_absolute_error
-from keras import backend as K
-import tensorflow as tf
-from uvicorn import run
-import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from uvicorn import run
 from PIL import Image
+import os
 
-# Carregar o modelo treinado
+# Definindo o modelo em PyTorch
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3)
+        self.pool2 = nn.MaxPool2d(2, 2)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3)
+        self.pool3 = nn.MaxPool2d(2, 2)
+        self.conv4 = nn.Conv2d(128, 256, kernel_size=3)
+        self.pool4 = nn.MaxPool2d(2, 2)
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(256*6*6, 256)
+        self.fc2 = nn.Linear(256*6*6, 256)
+        self.dropout = nn.Dropout(0.3)
+        self.gender_out = nn.Linear(256, 1)
+        self.age_out = nn.Linear(256, 1)
 
-#custom_objects = {"batch_shape": (1, 128, 128, 1)}  # Defina a especificação de batch_shape como um objeto personalizado
-model = tf.keras.models.load_model('meu_modelo.h5')
-model.save_weights('my_weights.weights.h5')
-img_size = 128
+    def forward(self, x):
+        x = self.pool1(torch.relu(self.conv1(x)))
+        x = self.pool2(torch.relu(self.conv2(x)))
+        x = self.pool3(torch.relu(self.conv3(x)))
+        x = self.pool4(torch.relu(self.conv4(x)))
+        x = self.flatten(x)
+        x1 = self.dropout(torch.relu(self.fc1(x)))
+        x2 = self.dropout(torch.relu(self.fc2(x)))
+        gender = torch.sigmoid(self.gender_out(x1)).squeeze(1)
+        age = self.age_out(x2).squeeze(1)
+        return gender, age
 
+# Verificar se CUDA está disponível e definir o dispositivo
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Instanciar o modelo e carregar os pesos
+model = CNN()
+model.load_state_dict(torch.load('meu_modelo.pth', map_location=device))
+model.to(device)
+model.eval()
+
+# Função para carregar e preprocessar a imagem
 def load_and_preprocess_image(file):
-    img = Image.open(file).convert('L')  # Abre a imagem e converte para escala de cinza
-    img = img.resize((img_size, img_size))  # Redimensiona para o tamanho desejado
-    img_array = np.array(img)  # Converte a imagem em um array numpy
-    img_array = np.expand_dims(img_array, axis=0)  # Adiciona uma dimensão para corresponder ao formato desejado (altura, largura, canal)
-    img_array = preprocess_input(img_array)  # Pré-processamento adicional, se necessário
-    return img_array
+    img = Image.open(file).convert('L')
+    img = img.resize((128, 128))
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+    img_tensor = transform(img).unsqueeze(0)  # Adiciona uma dimensão de batch
+    return img_tensor.to(device)
 
+# Função de predição
 def predict_image(file):
-    img_array = load_and_preprocess_image(file)
-    prediction = model.predict(img_array)
-    return prediction
+    img_tensor = load_and_preprocess_image(file)
+    with torch.no_grad():
+        pred_gender, pred_age = model(img_tensor)
+        print(f'Raw prediction - Gender: {pred_gender.item()}, Age: {pred_age.item()}')
+        pred_gender = 'Male' if round(pred_gender.item()) == 0 else 'Female'
+        pred_age = round(pred_age.item())
+    return pred_gender, pred_age
 
+# Configuração da API FastAPI
 app = FastAPI()
 
 origins = ["*"]
@@ -67,23 +102,15 @@ async def testando(file: UploadFile = File(...)):
         with open(file_location, "wb") as f:
             f.write(file.file.read())
 
-        prediction = predict_image(file_location)
+        pred_gender, pred_age = predict_image(file_location)
 
         # Remover a imagem temporária
         os.remove(file_location)
 
-        gender = prediction[0][0]
-        age = prediction[1][0]
-        print(gender, age)
-        
-        new_gender = int(gender[0])
-        new_age = round(age[0])
-    
-
         return {
             "prediction": {
-                "gender": "Male" if new_gender == 0 else "Female",
-                "age": new_age
+                "gender": pred_gender,
+                "age": pred_age
             }
         }
     except Exception as e:
